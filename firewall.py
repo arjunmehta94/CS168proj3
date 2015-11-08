@@ -28,7 +28,7 @@ class Firewall:
             if i != '':
                 country = i[-2:]
                 if country not in self.db_file_dict:
-                    db_file_dict[country] = []
+                    self.db_file_dict[country] = []
                 address_range = i[:-3].split(' ')
                 address_range[0] = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in address_range[0].split('.')]) , 2)
                 address_range[1] = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in address_range[1].split('.')]) , 2)  
@@ -92,15 +92,15 @@ class Firewall:
     # helper that does binary search on list of lists
     # returns true if val lies within some [min, max] range
     # that is within the list_of_lists
-    def binary_search(val, list_of_lists, start, end):
+    def binary_search(self, val, list_of_lists, start, end):
         if start > end:
             return False
         mid = (start + end)/2
         lst = list_of_lists[mid]
         if val < lst[0]:
-            return binary_search(val, list_of_lists, start, mid-1)
+            return self.binary_search(val, list_of_lists, start, mid-1)
         elif val > lst[1]:
-            return binary_search(val, list_of_lists, start+1, end)
+            return self.binary_search(val, list_of_lists, mid+1, end)
         else:
             return True
 
@@ -119,7 +119,7 @@ class Firewall:
         return True
     
     # return true if address matches, else false
-    def match__address(self, rule_address, external_address):
+    def match_address(self, rule_address, external_address):
         # checking for ANY
         if rule_address.upper() != "ANY" or rule_address != "0.0.0.0/0":
             # check for IP Prefix
@@ -141,7 +141,7 @@ class Firewall:
                 country_addresses = self.db_file_dict[rule_address.upper()]
                 # do binary search on this list
                 external_address_val = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in external_address.split('.')]) , 2) 
-                return binary_search(external_address_val, country_addresses, 0, len(country_addresses)-1)
+                return self.binary_search(external_address_val, country_addresses, 0, len(country_addresses)-1)
             # check for single IP address
             elif rule_address != external_address:
                 return False
@@ -158,7 +158,7 @@ class Firewall:
                 question = dns_data[12:]
                 i = 0
                 while question[i] != 0:
-                    i++
+                    i += 1
                 #increment i by 1 to get QTYPE
                 i += 1
                 qtype = question[i:i+2]
@@ -170,19 +170,21 @@ class Firewall:
         
         # walk through all rules
         final_index = -1
-        for rule in len(self.rules_file_list):
-            rule_split = self.rules_file_list.split(' ')
+        for rule in range(len(self.rules_file_list)):
+            rule_split = self.rules_file_list[rule].split(' ')
             rule_protocol = rule_split[1].upper()
             #check dns rules
             if rule_protocol == "DNS":
                 if is_dns:
-
-                
+                    pass    
             elif self.protocol_dict[rule_protocol] == protocol:
                 #checking external port and checking external address, if they match, this rule correctly applies
                 if self.match_port(rule_split[3], external_port) and self.match_address(rule_split[2], external_ip_address):
                     final_index = rule
-
+        if final_index == -1:
+            return True
+        else:
+            return self.rules_file_list[final_index].split(' ')[0].upper()  == "PASS"
 
     # TODO: You can add more methods as you want.
 
