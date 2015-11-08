@@ -30,6 +30,8 @@ class Firewall:
                 if country not in self.db_file_dict:
                     db_file_dict[country] = []
                 address_range = i[:-3].split(' ')
+                address_range[0] = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in address_range[0].split('.')]) , 2)
+                address_range[1] = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in address_range[1].split('.')]) , 2)  
                 self.db_file_dict[country].append(address_range)
         
         # TODO: Also do some initialization if needed.
@@ -87,6 +89,21 @@ class Firewall:
         elif pkt_dir == PKT_DIR_OUTGOING:
             self.iface_ext.send_ip_packet(pkt)
     
+    # helper that does binary search on list of lists
+    # returns true if val lies within some [min, max] range
+    # that is within the list_of_lists
+    def binary_search(val, list_of_lists, start, end):
+        if start > end:
+            return False
+        mid = (start + end)/2
+        lst = list_of_lists[mid]
+        if val < lst[0]:
+            return binary_search(val, list_of_lists, start, mid-1)
+        elif val > lst[1]:
+            return binary_search(val, list_of_lists, start+1, end)
+        else:
+            return True
+
     #returns true if port matches, else false
     def match_port(self, rule_port, external_port):
         #checking for ANY    
@@ -123,7 +140,8 @@ class Firewall:
                 # get list of ip addresses ranges for country
                 country_addresses = self.db_file_dict[rule_address.upper()]
                 # do binary search on this list
-                
+                external_address_val = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in external_address.split('.')]) , 2) 
+                return binary_search(external_address_val, country_addresses, 0, len(country_addresses)-1)
             # check for single IP address
             elif rule_address != external_address:
                 return False
