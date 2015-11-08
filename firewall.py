@@ -62,8 +62,8 @@ class Firewall:
         if self.protocol_dict['TCP'] == protocol_number or self.protocol_dict['UDP'] == protocol_number:
             src_port = packet[0:2]
             dst_port = packet[2:4]
-            source_port_number = struct.unpack('!H', src_port)
-            destination_port_number = struct.unpack('!H', dst_port)
+            source_port_number = socket.ntohs(struct.unpack('!H', src_port)[0])
+            destination_port_number = socket.ntohs(struct.unpack('!H', dst_port)[0])
             if pkt_dir == PKT_DIR_INCOMING:
                 if self.match_rules(protocol_number, source_ip_address, source_port_number, packet):
                     self.send_packet(pkt_dir, pkt)
@@ -72,7 +72,7 @@ class Firewall:
                     self.send_packet(pkt_dir, pkt)
         elif self.protocol_dict['ICMP'] == protocol_number:
             port = packet[0:1]
-            port_number = struct.unpack('!B', port)
+            port_number, = struct.unpack('!B', port)
             if self.match_rules(protocol_number, source_ip_address, port_number, packet):
                 self.send_packet(pkt_dir, pkt)
               
@@ -127,8 +127,12 @@ class Firewall:
     # return true if address matches, else false
     def match_address(self, rule_address, external_address):
         # checking for ANY
+        print "matching address"
+        print "rule_address: " + str(rule_address)
+        print "external_address: " + str(external_address)
         if rule_address.upper() != "ANY" or rule_address != "0.0.0.0/0":
             # check for IP Prefix
+            print "not ANY"
             if '/' in rule_address:
                 # what to do when its a /0 ?
 
@@ -146,14 +150,17 @@ class Firewall:
                 # get list of ip addresses ranges for country
                 #print "in country code case"
                 #print rule_address.upper()
+                print "inside country code"
                 country_addresses = self.db_file_dict[rule_address.upper()]
                 #print country_addresses
                 # do binary search on this list
                 external_address_val = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in external_address.split('.')]) , 2) 
-                #print external_address_val
+                print "External address: " + str(external_address)
+                print "External address val: " + str(external_address_val)
                 return self.binary_search(external_address_val, country_addresses, 0, len(country_addresses)-1)
             # check for single IP address
             elif rule_address != external_address:
+                print "inside single address"
                 return False
         return True
     
@@ -164,7 +171,7 @@ class Firewall:
         if self.protocol_dict['UDP'] == protocol and external_port == 53:
             dns_data = packet[8:]
             qd_count = dns_data[4:6]
-            if struct.unpack('!H',qd_count) == 1:
+            if socket.ntohs(struct.unpack('!H',qd_count)[0]) == 1:
                 question = dns_data[12:]
                 i = 0
                 while question[i] != 0:
@@ -172,22 +179,26 @@ class Firewall:
                 #increment i by 1 to get QTYPE
                 i += 1
                 qtype = question[i:i+2]
-                val = struct.unpack('!H',qtype)
+                val = socket.ntohs(struct.unpack('!H',qtype)[0])
                 if val == 1 or val == 28:
                     qclass = question[i+2:i+4]
-                    if struct.unpack('!H',qclass) == 1:
+                    if socket.ntohs(struct.unpack('!H',qclass)[0]) == 1:
                         is_dns = True
         
         # walk through all rules
         final_index = -1
         for rule in range(len(self.rules_file_list)):
             rule_split = self.rules_file_list[rule].split(' ')
+            
             rule_protocol = rule_split[1].upper()
+            #print rule_protocol
             #check dns rules
             if rule_protocol == "DNS":
                 if is_dns:
                     pass    
+            #any rule other than dns, i.e. icmp, tcp, udp
             elif self.protocol_dict[rule_protocol] == protocol:
+                #print "inside protocol match " + str(rule_protocol)
                 #checking external port and checking external address, if they match, this rule correctly applies
                 if self.match_port(rule_split[3], external_port) and self.match_address(rule_split[2], external_ip_address):
                     final_index = rule
