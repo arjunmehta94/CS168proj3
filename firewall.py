@@ -72,7 +72,7 @@ class Firewall:
               
     def get_header_length(self, header_length):
         b, = struct.unpack('!B', header_length)
-        b = bin(b)
+        b = bin(b).zfill(8)
         return int('0b' + b[-4:], 2) * 4
     
     def determine(self, x):
@@ -87,19 +87,83 @@ class Firewall:
         elif pkt_dir == PKT_DIR_OUTGOING:
             self.iface_ext.send_ip_packet(pkt)
     
+    #returns true if port matches, else false
+    def match_port(self, rule_port, external_port):
+        #checking for ANY    
+        if rule_port.upper() != "ANY":
+            #checking for range
+            if '-' in rule_port:
+                range_rule_port = rule_port.split('-')
+                if external_port < int(range_rule_port[0]) or external_port > int(range_rule_port[1]):
+                    return False
+            #checking for exact match
+            elif int(rule_port) != external_port:
+                return False
+        return True
+    
+    # return true if address matches, else false
+    def match__address(self, rule_address, external_address):
+        # checking for ANY
+        if rule_address.upper() != "ANY" or rule_address != "0.0.0.0/0":
+            # check for IP Prefix
+            if '/' in rule_address:
+                # what to do when its a /0 ?
+
+                rule_address_split = rule_address.split('/')
+                rule_address_quad = rule_address_split[0].split('.')
+                external_address_quad = external_address.split('.')
+                rule_address_quad_binary = ''.join([bin(int(x))[2:].zfill(8) for x in rule_address_quad])
+                external_address_quad_binary = ''.join([bin(int(x))[2:].zfill(8) for x in external_address_quad])
+                rule_address_mask = rule_address_quad_binary[:int(rule_address_split[1])]
+                external_address_mask = external_address_quad_binary[:int(rule_address_split[1])]
+                if rule_address_mask != external_address_mask:
+                    return False
+            # check for country code
+            elif rule_address.upper() in self.db_file_dict:
+                # get list of ip addresses ranges for country
+                country_addresses = self.db_file_dict[rule_address.upper()]
+                # do binary search on this list
+                
+            # check for single IP address
+            elif rule_address != external_address:
+                return False
+        return True
+    
     # helper that returns either true for pass or false for drop, based on protocol/ip/port and DNS rules
     def match_rules(self, protocol, external_ip_address, external_port, packet):
         # check special case DNS
+        is_dns = False
         if self.protocol_dict['UDP'] == protocol and external_port == 53:
             dns_data = packet[8:]
-
-        # walk through all rules
+            qd_count = dns_data[4:6]
+            if struct.unpack('!H',qd_count) == 1:
+                question = dns_data[12:]
+                i = 0
+                while question[i] != 0:
+                    i++
+                #increment i by 1 to get QTYPE
+                i += 1
+                qtype = question[i:i+2]
+                val = struct.unpack('!H',qtype)
+                if val == 1 or val == 28:
+                    qclass = question[i+2:i+4]
+                    if struct.unpack('!H',qclass) == 1:
+                        is_dns = True
         
+        # walk through all rules
+        final_index = -1
         for rule in len(self.rules_file_list):
             rule_split = self.rules_file_list.split(' ')
+            rule_protocol = rule_split[1].upper()
+            #check dns rules
+            if rule_protocol == "DNS":
+                if is_dns:
 
-            if self.protocol_dict[rule_split[1].upper()] == protocol:
-
+                
+            elif self.protocol_dict[rule_protocol] == protocol:
+                #checking external port and checking external address, if they match, this rule correctly applies
+                if self.match_port(rule_split[3], external_port) and self.match_address(rule_split[2], external_ip_address):
+                    final_index = rule
 
 
     # TODO: You can add more methods as you want.
