@@ -34,14 +34,18 @@ class Firewall:
                     db_file_dict[country] = []
                 address_range = i[:-3].split(' ')
                 db_file_dict[country].append(address_range)
-
+        
         # TODO: Also do some initialization if needed.
 
     # @pkt_dir: either PKT_DIR_INCOMING or PKT_DIR_OUTGOING
     # @pkt: the actual data of the IPv4 packet (including IP header)
     def handle_packet(self, pkt_dir, pkt):
         # TODO: Your main firewall code will be here.
-        pass
+        src_ip = pkt[12:16]
+        dst_ip = pkt[16:20]
+        protocol = pkt[9:10]
+        total_length = pkt[2:4]
+        header_length = pkt[0:1] #last 4 bits of 1st byte, need to parse
 
     # TODO: You can add more methods as you want.
 
