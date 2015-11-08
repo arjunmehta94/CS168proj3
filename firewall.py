@@ -15,8 +15,11 @@ class Firewall:
         # Load the firewall rules (from rule_filename) here.
         rules_file = open(config['rule'], 'r')
         rules_file_text = rules_file.read()
-        rules_file_text = rules_file_text.split('\n')
-        self.rules_file_list = [x for x in rules_file_text if self.determine(x)]
+        if rules_file_text == '':
+            self.rules_file_list = []
+        else:
+            rules_file_text = rules_file_text.split('\n')
+            self.rules_file_list = [x for x in rules_file_text if self.determine(x)]
 
         
         # Load the GeoIP DB ('geoipdb.txt') as well.
@@ -49,8 +52,9 @@ class Firewall:
         destination_ip_address = socket.inet_ntoa(dst_ip)
         # check type of protocol - if not TCP, UDP or ICMP, just pass
         protocol_number, = struct.unpack('!B', protocol)
-        if protocol_number not in self.protocol_dict.values():
-            self.send_packet(pkd_dir, pkt)
+        if protocol_number not in self.protocol_dict.values() or self.rules_file_list == []:
+            self.send_packet(pkt_dir, pkt)
+            return
         header_length = self.get_header_length(header_length)
 
         # data of IPv4 packet
@@ -94,6 +98,7 @@ class Firewall:
     # that is within the list_of_lists
     def binary_search(self, val, list_of_lists, start, end):
         if start > end:
+            #print "false"
             return False
         mid = (start + end)/2
         lst = list_of_lists[mid]
@@ -102,6 +107,7 @@ class Firewall:
         elif val > lst[1]:
             return self.binary_search(val, list_of_lists, mid+1, end)
         else:
+            #print"true"
             return True
 
     #returns true if port matches, else false
@@ -138,9 +144,13 @@ class Firewall:
             # check for country code
             elif rule_address.upper() in self.db_file_dict:
                 # get list of ip addresses ranges for country
+                #print "in country code case"
+                #print rule_address.upper()
                 country_addresses = self.db_file_dict[rule_address.upper()]
+                #print country_addresses
                 # do binary search on this list
                 external_address_val = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in external_address.split('.')]) , 2) 
+                #print external_address_val
                 return self.binary_search(external_address_val, country_addresses, 0, len(country_addresses)-1)
             # check for single IP address
             elif rule_address != external_address:
