@@ -2,7 +2,8 @@
 
 from main import PKT_DIR_INCOMING, PKT_DIR_OUTGOING
 
-# TODO: Feel free to import any Python standard moduless as necessary.
+import socket
+import struct
 # (http://docs.python.org/2/library/)
 # You must NOT use any 3rd-party libraries.
 
@@ -58,15 +59,15 @@ class Firewall:
             source_port_number = struct.unpack('!H', src_port)
             destination_port_number = struct.unpack('!H', dst_port)
             if pkt_dir == PKT_DIR_INCOMING:
-                if self.match_rules(protocol_number, source_ip_address, source_port_number):
+                if self.match_rules(protocol_number, source_ip_address, source_port_number, packet):
                     self.send_packet(pkt_dir, pkt)
             elif pkt_dir == PKT_DIR_OUTGOING:
-                if self.match_rules(protocol_number, destination_ip_address, destination_port_number):
+                if self.match_rules(protocol_number, destination_ip_address, destination_port_number, packet):
                     self.send_packet(pkt_dir, pkt)
         elif self.protocol_dict['ICMP'] == protocol_number:
             port = packet[0:1]
             port_number = struct.unpack('!B', port)
-            if self.match_rules(protocol_number, source_ip_address, port_number):
+            if self.match_rules(protocol_number, source_ip_address, port_number, packet):
                 self.send_packet(pkt_dir, pkt)
               
     def get_header_length(self, header_length):
@@ -90,6 +91,7 @@ class Firewall:
     def match_rules(self, protocol, external_ip_address, external_port, packet):
         # check special case DNS
         if self.protocol_dict['UDP'] == protocol and external_port == 53:
+            dns_data = packet[8:]
 
         # walk through all rules
         
