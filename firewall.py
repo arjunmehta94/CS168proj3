@@ -38,7 +38,7 @@ class Firewall:
                 self.db_file_dict[country].append(address_range)
         
         # TODO: Also do some initialization if needed.
-
+        # print self.db_file_dict['AU']
     # @pkt_dir: either PKT_DIR_INCOMING or PKT_DIR_OUTGOING
     # @pkt: the actual data of the IPv4 packet (including IP header)
     def handle_packet(self, pkt_dir, pkt):
@@ -56,7 +56,9 @@ class Firewall:
             self.send_packet(pkt_dir, pkt)
             return
         header_length = self.get_header_length(header_length)
-
+        # drop packets with header length < 20
+        if header_length < 20:
+            return
         # data of IPv4 packet
         packet = pkt[header_length:]
         if self.protocol_dict['TCP'] == protocol_number or self.protocol_dict['UDP'] == protocol_number:
@@ -127,9 +129,9 @@ class Firewall:
     # return true if address matches, else false
     def match_address(self, rule_address, external_address):
         # checking for ANY
-        print "matching address"
-        print "rule_address: " + str(rule_address)
-        print "external_address: " + str(external_address)
+        #print "matching address"
+        #print "rule_address: " + str(rule_address)
+        #print "external_address: " + str(external_address)
         if rule_address.upper() != "ANY" and  rule_address != "0.0.0.0/0":
             # check for IP Prefix
             #print "not ANY"
@@ -151,14 +153,14 @@ class Firewall:
                 # get list of ip addresses ranges for country
                 #print "in country code case"
                 #print rule_address.upper()
-                print "inside country code"
+                #print "inside country code"
                 country_addresses = self.db_file_dict[rule_address.upper()]
                 #print country_addresses
                 #print country_addresses
                 # do binary search on this list
                 external_address_val = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in external_address.split('.')]) , 2) 
-                print "External address: " + str(external_address)
-                print "External address val: " + str(external_address_val)
+                #print "External address: " + str(external_address)
+                #print "External address val: " + str(external_address_val)
                 return self.binary_search(external_address_val, country_addresses, 0, len(country_addresses)-1)
             # check for single IP address
             elif rule_address != external_address:
@@ -169,7 +171,7 @@ class Firewall:
     # helper that returns either true for pass or false for drop, based on protocol/ip/port and DNS rules
     def match_rules(self, protocol, external_ip_address, external_port, packet):
         # check special case DNS
-        print "protocol number: " + str(protocol)
+        #print "protocol number: " + str(protocol)
         is_dns = False
         if self.protocol_dict['UDP'] == protocol and external_port == 53:
             dns_data = packet[8:]
@@ -205,14 +207,14 @@ class Firewall:
                 #checking external port and checking external address, if they match, this rule correctly applies
                 match_port_result = self.match_port(rule_split[3], external_port) 
                 match_address_result = self.match_address(rule_split[2], external_ip_address)
-                print "match_port_result: " + str(match_port_result)
-                print "match_address_result: " + str(match_address_result)
+                #print "match_port_result: " + str(match_port_result)
+                #print "match_address_result: " + str(match_address_result)
                 if match_port_result and match_address_result:
                     final_index = rule
         if final_index == -1:
             return True
         else:
-            print "default rule: " + str(self.rules_file_list[final_index])
+            #print "default rule: " + str(self.rules_file_list[final_index])
             return self.rules_file_list[final_index].split(' ')[0].upper()  == "PASS"
 
     # TODO: You can add more methods as you want.
