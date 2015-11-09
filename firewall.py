@@ -31,7 +31,7 @@ class Firewall:
             if i != '':
                 country = i[-2:]
                 if country not in self.db_file_dict:
-                    self.db_file_dict[country] = []
+                    self.db_file_dict[country.upper()] = []
                 address_range = i[:-3].split(' ')
                 address_range[0] = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in address_range[0].split('.')]) , 2)
                 address_range[1] = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in address_range[1].split('.')]) , 2)  
@@ -55,8 +55,8 @@ class Firewall:
         if protocol_number not in self.protocol_dict.values() or self.rules_file_list == []:
             self.send_packet(pkt_dir, pkt)
             return
-        header_length = self.get_header_length(header_length)
-        # drop packets with header length < 20
+        header_length = self.get_header_length(header_length) 
+        # drop packet if header length < 20
         if header_length < 20:
             return
         # data of IPv4 packet
