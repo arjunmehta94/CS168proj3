@@ -130,12 +130,12 @@ class Firewall:
         print "matching address"
         print "rule_address: " + str(rule_address)
         print "external_address: " + str(external_address)
-        if rule_address.upper() != "ANY" or rule_address != "0.0.0.0/0":
+        if rule_address.upper() != "ANY" and  rule_address != "0.0.0.0/0":
             # check for IP Prefix
-            print "not ANY"
+            #print "not ANY"
             if '/' in rule_address:
                 # what to do when its a /0 ?
-
+                #print "inside /"
                 rule_address_split = rule_address.split('/')
                 rule_address_quad = rule_address_split[0].split('.')
                 external_address_quad = external_address.split('.')
@@ -144,6 +144,7 @@ class Firewall:
                 rule_address_mask = rule_address_quad_binary[:int(rule_address_split[1])]
                 external_address_mask = external_address_quad_binary[:int(rule_address_split[1])]
                 if rule_address_mask != external_address_mask:
+                    #print "returning false inside /"
                     return False
             # check for country code
             elif rule_address.upper() in self.db_file_dict:
@@ -153,6 +154,7 @@ class Firewall:
                 print "inside country code"
                 country_addresses = self.db_file_dict[rule_address.upper()]
                 #print country_addresses
+                #print country_addresses
                 # do binary search on this list
                 external_address_val = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in external_address.split('.')]) , 2) 
                 print "External address: " + str(external_address)
@@ -160,13 +162,14 @@ class Firewall:
                 return self.binary_search(external_address_val, country_addresses, 0, len(country_addresses)-1)
             # check for single IP address
             elif rule_address != external_address:
-                print "inside single address"
+                #print "inside single address"
                 return False
         return True
     
     # helper that returns either true for pass or false for drop, based on protocol/ip/port and DNS rules
     def match_rules(self, protocol, external_ip_address, external_port, packet):
         # check special case DNS
+        print "protocol number: " + str(protocol)
         is_dns = False
         if self.protocol_dict['UDP'] == protocol and external_port == 53:
             dns_data = packet[8:]
@@ -200,11 +203,16 @@ class Firewall:
             elif self.protocol_dict[rule_protocol] == protocol:
                 #print "inside protocol match " + str(rule_protocol)
                 #checking external port and checking external address, if they match, this rule correctly applies
-                if self.match_port(rule_split[3], external_port) and self.match_address(rule_split[2], external_ip_address):
+                match_port_result = self.match_port(rule_split[3], external_port) 
+                match_address_result = self.match_address(rule_split[2], external_ip_address)
+                print "match_port_result: " + str(match_port_result)
+                print "match_address_result: " + str(match_address_result)
+                if match_port_result and match_address_result:
                     final_index = rule
         if final_index == -1:
             return True
         else:
+            print "default rule: " + str(self.rules_file_list[final_index])
             return self.rules_file_list[final_index].split(' ')[0].upper()  == "PASS"
 
     # TODO: You can add more methods as you want.
