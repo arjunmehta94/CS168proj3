@@ -233,7 +233,9 @@ class Firewall:
                 if is_dns:
                     # address of domain
                     domain = rule_split[2]
-                    
+                    match_address_result = self.match_address(domain, external_ip_address)
+                    if match_address_result:
+                        final_index = rule
 
             #any rule other than dns, i.e. icmp, tcp, udp
             elif self.protocol_dict[rule_protocol] == protocol:
