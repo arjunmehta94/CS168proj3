@@ -75,6 +75,7 @@ class Firewall:
                 if self.match_rules(protocol_number, destination_ip_address, destination_port_number, packet, pkt_dir):
                     self.send_packet(pkt_dir, pkt)
         elif self.protocol_dict['ICMP'] == protocol_number:
+            print "icmp packet"
             port = packet[0:1]
             port_number, = struct.unpack('!B', port)
             if pkt_dir == PKT_DIR_INCOMING:
@@ -121,6 +122,7 @@ class Firewall:
     #returns true if port matches, else false
     def match_port(self, rule_port, external_port):
         #checking for ANY    
+    #print rule_port
         if rule_port.upper() != "ANY":
             #checking for range
             if '-' in rule_port:
@@ -146,6 +148,8 @@ class Firewall:
                 #print "inside /"
                 rule_address_split = rule_address.split('/')
                 rule_address_quad = rule_address_split[0].split('.')
+                if rule_address_split[1] == "0":
+                    return True
                 external_address_quad = external_address.split('.')
                 rule_address_quad_binary = ''.join([bin(int(x))[2:].zfill(8) for x in rule_address_quad])
                 external_address_quad_binary = ''.join([bin(int(x))[2:].zfill(8) for x in external_address_quad])
@@ -183,6 +187,7 @@ class Firewall:
         #print self.protocol_dict['UDP'] == protocol
         #print external_port
         #print external_port == 53
+        print protocol
         if self.protocol_dict['UDP'] == protocol and pkt_dir == PKT_DIR_OUTGOING and external_port == 53:   
             dns_data = packet[8:]
             qd_count = dns_data[4:6]
@@ -200,7 +205,7 @@ class Firewall:
                     q_name.append(tmp)
                     tmp = ''
                     i += number + 1
-                #print q_name
+                print q_name
                 #increment i by 1 to get QTYPE
                 i += 1
                 qtype = question[i:i+2]
@@ -219,12 +224,15 @@ class Firewall:
             #print rule_protocol
             #check and apply dns rules if rule is type dns
             if rule_protocol == "DNS":
+        print is_dns
                 if is_dns:
                     #print "in dns case"
                     # name of domain
+                    print rule_split
                     domain = rule_split[2]
                     # if first character is star, then rest of domain 
                     # should match with any address with same suffix
+                    print domain
                     if domain[0] == '*':
                     #print "first is *"
                         domain = domain[1:]
@@ -233,9 +241,10 @@ class Firewall:
                     if domain != '':
                         #print "entry not empty"
                         domain_split = domain.split('.')
-                    if domain_split[0] == '':
-                        domain_split = domain_split[1:]
-                        #print domain_split
+            #print domain_split
+                        if domain_split[0] == '':
+                            domain_split = domain_split[1:]
+                        print domain_split
                         if domain_split == q_name[-len(domain_split):]:
                             #print "in this case"
                             final_index = rule
@@ -254,7 +263,7 @@ class Firewall:
 
             #any rule other than dns, i.e. icmp, tcp, udp
             elif self.protocol_dict[rule_protocol] == protocol:
-                #print "inside protocol match " + str(rule_protocol)
+                print "inside protocol match " + str(rule_protocol)
                 #checking external port and checking external address, if they match, this rule correctly applies
                 #print "address " + str(external_ip_address)
                 #print "port " + str(external_port)
