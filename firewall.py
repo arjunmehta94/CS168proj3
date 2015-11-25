@@ -66,24 +66,24 @@ class Firewall:
             source_port_number = struct.unpack('!H', src_port)[0]
             destination_port_number = struct.unpack('!H', dst_port)[0]
             if pkt_dir == PKT_DIR_INCOMING:
-                if self.match_rules(protocol_number, source_ip_address, source_port_number, packet, pkt_dir):
+                if self.match_rules(protocol_number, source_ip_address, source_port_number, packet, pkt_dir, pkt[:header_length]):
                     self.send_packet(pkt_dir, pkt)
             elif pkt_dir == PKT_DIR_OUTGOING:
-                if self.match_rules(protocol_number, destination_ip_address, destination_port_number, packet, pkt_dir):
+                if self.match_rules(protocol_number, destination_ip_address, destination_port_number, packet, pkt_dir, pkt[:header_length]):
                     self.send_packet(pkt_dir, pkt)
         elif self.protocol_dict['ICMP'] == protocol_number:
             port = packet[0:1]
             port_number, = struct.unpack('!B', port)
             if pkt_dir == PKT_DIR_INCOMING:
-                if self.match_rules(protocol_number, source_ip_address, port_number, packet, pkt_dir):
+                if self.match_rules(protocol_number, source_ip_address, port_number, packet, pkt_dir, pkt[:header_length]):
                     self.send_packet(pkt_dir, pkt)
             elif pkt_dir == PKT_DIR_OUTGOING:
-                if self.match_rules(protocol_number, destination_ip_address, port_number, packet, pkt_dir):
+                if self.match_rules(protocol_number, destination_ip_address, port_number, packet, pkt_dir, pkt[:header_length]):
                     self.send_packet(pkt_dir, pkt)
               
     def get_header_length(self, header_length):
         b, = struct.unpack('!B', header_length)
-        b = bin(b).zfill(8)
+        b = bin(b)[2:].zfill(8)
         return int('0b' + b[-4:], 2) * 4
     
     def determine(self, x):
@@ -158,10 +158,12 @@ class Firewall:
         return True
     
     # helper that returns either true for pass or false for drop, based on protocol/ip/port and DNS rules
-    def match_rules(self, protocol, external_ip_address, external_port, packet, pkt_dir):
+    def match_rules(self, protocol, external_ip_address, external_port, packet, pkt_dir, header):
         # check special case DNS
         is_dns = False
+        is_aaaa = False
         q_name = []
+        ip_header = header
         if self.protocol_dict['UDP'] == protocol and pkt_dir == PKT_DIR_OUTGOING and external_port == 53:   
             dns_data = packet[8:]
             qd_count = dns_data[4:6]
@@ -183,6 +185,8 @@ class Firewall:
                 qtype = question[i:i+2]
                 val = struct.unpack('!H',qtype)[0]
                 if val == 1 or val == 28:
+                    if val == 28:
+                        is_aaaa = True
                     qclass = question[i+2:i+4]
                     if struct.unpack('!H',qclass)[0] == 1:
                         is_dns = True
@@ -191,11 +195,35 @@ class Firewall:
         final_index = -1
         for rule in range(len(self.rules_file_list)):
             rule_split = self.rules_file_list[rule].split(' ')
-            
+            verdict = rule_split[0].upper()
             rule_protocol = rule_split[1].upper()
             #check and apply dns rules if rule is type dns
             if rule_protocol == "DNS":
                 if is_dns:
+                    if verdict == "DENY":
+                        if is_aaaa:
+                            return False
+
+
+                        dns_data = packet[8:]
+
+                        # set ip header destination to address
+                        ip_header[16:20] = socket.aton("169.229.49.130")
+
+                        # changing QR and AA to 1
+                        value = struct.unpack('!B', dns_data[2:3])
+                        b = bin(value)[2:].zfill(8)
+                        b = list(b)
+                        b[0] = str(1)
+                        b[5] = str(1)
+                        b = ''.join(b)
+                        b = struct.pack('!B', b)
+                        dns_data = dns_data[0:2] + b + dns[3:]
+
+                        # may need to change RCODE, not sure
+
+
+                        return False
                     # name of domain
                     domain = rule_split[2]
                     # if first character is star, then rest of domain 
