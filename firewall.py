@@ -164,6 +164,7 @@ class Firewall:
         is_aaaa = False
         q_name = []
         ip_header = header
+        name = ''
         if self.protocol_dict['UDP'] == protocol and pkt_dir == PKT_DIR_OUTGOING and external_port == 53:   
             dns_data = packet[8:]
             qd_count = dns_data[4:6]
@@ -174,13 +175,19 @@ class Firewall:
                 hex_zero = struct.pack('!B', 0)
                 while question[i] != hex_zero:
                     number = question[i]
+                    name += number
+                    #print number
                     number = struct.unpack('!B', number)[0]
+                    #print number
                     for j in range(1, number+1):
                         tmp += question[i+j]
+                        name += question[i+j]
+                        #print tmp
                     q_name.append(tmp)
                     tmp = ''
                     i += number + 1
                 #increment i by 1 to get QTYPE
+                name += hex_zero
                 i += 1
                 qtype = question[i:i+2]
                 val = struct.unpack('!H',qtype)[0]
@@ -193,6 +200,7 @@ class Firewall:
         
         # walk through all rules
         final_index = -1
+        answer = ''
         for rule in range(len(self.rules_file_list)):
             rule_split = self.rules_file_list[rule].split(' ')
             verdict = rule_split[0].upper()
@@ -204,30 +212,55 @@ class Firewall:
                         if is_aaaa:
                             return False
 
-
+                        udp_header = packet[0:8]
                         dns_data = packet[8:]
 
                         # set ip header destination to address
-                        ip_header[16:20] = socket.aton("169.229.49.130")
+                        ip_header = ip_header[0:16] + socket.aton("169.229.49.130") + ip_header[20:]
 
-                        # changing QR and AA to 1
+                        # changing QR to 1, TC to 0, not sure about AA
                         value = struct.unpack('!B', dns_data[2:3])
                         b = bin(value)[2:].zfill(8)
-                        b = list(b)
-                        b[0] = str(1)
-                        b[5] = str(1)
-                        b = ''.join(b)
+                        b = '1' + b[1:6] + '0' + b[7:]
                         b = struct.pack('!B', b)
                         dns_data = dns_data[0:2] + b + dns[3:]
 
-                        # may need to change RCODE, not sure
+                        # changing RCODE to 0
+                        value = struct.unpack('!B', dns_data[3:4])
+                        b = bin(value)[2:].zfill(8)
+                        b = b[0:4] + '0000'
+                        b = struct.pack('!B', b)
+                        dns_data = dns_data[0:3] + b + dns[4:]
 
+                        # changing ANCOUNT to 1
+                        val = struct.pack('!H', 1)
+                        dns_data = dns_data[0:6] + val + dns_data[8:]
 
+                        # changing NSCOUNT and ARCOUNT to 0
+                        dns_data = dns_data[0:8] + struct.pack('!H', 0) + struct.pack('!H', 0) + dns_data[12:]
+
+                        # creating answer section
+                        answer += name # set the name
+                        answer += struct.pack('!H', 1) # set the type to 1, A
+                        answer += struct.pack('!H', 1) # set the class to 1, IN
+                        answer += struct.pack('!L', 1) # set the TTL to 1
+                        answer += struct.pack('!H', 4) # set RDLENGTH to 4
+                        answer += struct.pack('!L', int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in '169.229.49.130'.split('.')]) , 2)) # set RDATA to 169.229.49.130
+
+                        # add on answer section
+                        dns_data = dns_data[0:17 + len(name)] + answer 
+
+                        # create complete dns response packet
+                        dns_response_packet = ip_header + udp_header + dns_data
+
+                        #send dns response packet
+                        self.send_packet(PKT_DIR_INCOMING, dns_response_packet)
                         return False
                     # name of domain
                     domain = rule_split[2]
                     # if first character is star, then rest of domain 
                     # should match with any address with same suffix
+                    #print domain
                     if domain[0] == '*':
                         domain = domain[1:]
                     # if domain was only '*', then it should match
