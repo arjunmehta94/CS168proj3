@@ -216,21 +216,21 @@ class Firewall:
                         dns_data = packet[8:]
 
                         # set ip header destination to address
-                        ip_header = ip_header[0:16] + socket.aton("169.229.49.130") + ip_header[20:]
+                        # ip_header = ip_header[0:16] + socket.inet_aton("169.229.49.130") + ip_header[20:]
 
                         # changing QR to 1, TC to 0, not sure about AA
-                        value = struct.unpack('!B', dns_data[2:3])
+                        value = struct.unpack('!B', dns_data[2:3])[0]
                         b = bin(value)[2:].zfill(8)
-                        b = '1' + b[1:6] + '0' + b[7:]
-                        b = struct.pack('!B', b)
-                        dns_data = dns_data[0:2] + b + dns[3:]
+                        b = '10000' + b[5:6] + '0' + b[7:]
+                        b = struct.pack('!B', int('0b' + b, 2))
+                        dns_data = dns_data[0:2] + b + dns_data[3:]
 
                         # changing RCODE to 0
-                        value = struct.unpack('!B', dns_data[3:4])
+                        value = struct.unpack('!B', dns_data[3:4])[0]
                         b = bin(value)[2:].zfill(8)
                         b = b[0:4] + '0000'
-                        b = struct.pack('!B', b)
-                        dns_data = dns_data[0:3] + b + dns[4:]
+                        b = struct.pack('!B', int('0b' + b, 2))
+                        dns_data = dns_data[0:3] + b + dns_data[4:]
 
                         # changing ANCOUNT to 1
                         val = struct.pack('!H', 1)
@@ -248,7 +248,7 @@ class Firewall:
                         answer += struct.pack('!L', int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in '169.229.49.130'.split('.')]) , 2)) # set RDATA to 169.229.49.130
 
                         # add on answer section
-                        dns_data = dns_data[0:17 + len(name)] + answer 
+                        dns_data = dns_data[0:17 + len(name)] + answer + dns_data[17+len(name)+len(answer):]
 
                         # create complete dns response packet
                         dns_response_packet = ip_header + udp_header + dns_data
