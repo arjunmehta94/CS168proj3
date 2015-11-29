@@ -113,6 +113,20 @@ class Firewall:
         else:
             return True
 
+    def calculate_ip_checksum(self, ip_header, header_length):
+        total = 0
+        i = 0
+        while i != header_length:
+            two_byte_chunk = struct.unpack('!H', ip_header[i:i+2])
+            total += two_byte_chunk
+            i += 2
+        if i != header_length:
+            total += struct.unpack('!H', ip_header[i:i+1])
+        while (total >> 16) != 0:
+            total = (total & 0xFFFF)+(total >> 16)
+        return ~total
+
+
     #returns true if port matches, else false
     def match_port(self, rule_port, external_port):
         #checking for ANY    
