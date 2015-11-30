@@ -291,7 +291,7 @@ class Firewall:
                         return False
                     udp_header = packet[0:8]
                     dns_data = packet[8:]
-
+                    original_udp_length = struct.unpack('!H', udp_header[4:6])[0]
                     # verifying IP checksum
                     # ip_checksum = struct.unpack('!H', ip_header[10:12])[0]
                     # ip_header = ip_header[0:10] + struct.pack('!H', 0) + ip_header[12:]
@@ -347,7 +347,7 @@ class Firewall:
                     #print dns_data
                     # change udp_header length
                     new_udp_header_length = 16+len(name)+len(answer) # 12 bytes udp header + (name + 4 bytes) question + answer
-                    udp_header = udp_header[0:4] + struct.pack('!H', new_udp_header_length) + udp_header[6:]
+                    udp_header = udp_header[0:4] + struct.pack('!H', original_udp_length+len(answer)) + udp_header[6:]
 
                     # switch src and dst ip address
                     src_ip = ip_header[12:16]
@@ -366,8 +366,10 @@ class Firewall:
                     
                     # change ip total length
                     curr_ip_total_length = struct.unpack('!H', ip_header[2:4])[0]
-                    ip_header = ip_header[0:2] + struct.pack('!H', curr_ip_total_length + len(answer)) + ip_header[4:]
-
+                    print curr_ip_total_length
+                    curr_ip_total_length += len(answer)
+                    ip_header = ip_header[0:2] + struct.pack('!H', curr_ip_total_length) + ip_header[4:]
+                    print (curr_ip_total_length + len(answer))
                     # recalculate ip checksum, add it back to ip header
                     recalculated_ip_checksum = self.calculate_ip_checksum(ip_header, header_length)
                     ip_header = ip_header[0:10] + struct.pack('!H', recalculated_ip_checksum) + ip_header[12:]
