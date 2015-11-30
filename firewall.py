@@ -66,19 +66,19 @@ class Firewall:
             source_port_number = struct.unpack('!H', src_port)[0]
             destination_port_number = struct.unpack('!H', dst_port)[0]
             if pkt_dir == PKT_DIR_INCOMING:
-                if self.match_rules(protocol_number, source_ip_address, source_port_number, packet, pkt_dir, pkt[:header_length]):
+                if self.match_rules(protocol_number, source_ip_address, source_port_number, packet, pkt_dir, pkt[:header_length], header_length):
                     self.send_packet(pkt_dir, pkt)
             elif pkt_dir == PKT_DIR_OUTGOING:
-                if self.match_rules(protocol_number, destination_ip_address, destination_port_number, packet, pkt_dir, pkt[:header_length]):
+                if self.match_rules(protocol_number, destination_ip_address, destination_port_number, packet, pkt_dir, pkt[:header_length], header_length):
                     self.send_packet(pkt_dir, pkt)
         elif self.protocol_dict['ICMP'] == protocol_number:
             port = packet[0:1]
             port_number, = struct.unpack('!B', port)
             if pkt_dir == PKT_DIR_INCOMING:
-                if self.match_rules(protocol_number, source_ip_address, port_number, packet, pkt_dir, pkt[:header_length]):
+                if self.match_rules(protocol_number, source_ip_address, port_number, packet, pkt_dir, pkt[:header_length], header_length):
                     self.send_packet(pkt_dir, pkt)
             elif pkt_dir == PKT_DIR_OUTGOING:
-                if self.match_rules(protocol_number, destination_ip_address, port_number, packet, pkt_dir, pkt[:header_length]):
+                if self.match_rules(protocol_number, destination_ip_address, port_number, packet, pkt_dir, pkt[:header_length], header_length):
                     self.send_packet(pkt_dir, pkt)
               
     def get_header_length(self, header_length):
@@ -126,20 +126,20 @@ class Firewall:
             total = (total & 0xFFFF)+(total >> 16)
         return ~total
 
-    def calculate_tcp_checksum(self, ip_header, ip_header_length, tcp_packet):
+    def calculate_tcp_udp_checksum(self, ip_header, ip_header_length, packet):
         #construct pseudo_header - src address, dst address, zeros, protocol number, tcp length
         pseudo_header = ''
         src_ip = ip_header[12:16] # src ip
         dst_ip = ip_header[16:20] # dst ip
         protocol = ip_header[9:10] # protocol number
-        tcp_total_length = struct.unpack('!H', ip_header[2:4])[0] - ip_header_length # total length in bytes
+        total_length = struct.unpack('!H', ip_header[2:4])[0] - ip_header_length # total length in bytes
         pseudo_header += src_ip
         pseudo_header += dst_ip
         pseudo_header += struct.pack('!B', 0)
         pseudo_header += protocol
-        pseudo_header += struct.pack('!H', tcp_total_length)
-        tcp_packet_to_checksum = pseudo_header + tcp_packet
-        return self.calculate_ip_checksum(tcp_packet_to_checksum, tcp_total_length + 12)
+        pseudo_header += struct.pack('!H', total_length)
+        packet_to_checksum = pseudo_header + packet
+        return self.calculate_ip_checksum(packet_to_checksum, total_length + 12)
 
 
 
@@ -188,7 +188,7 @@ class Firewall:
         return True
     
     # helper that returns either true for pass or false for drop, based on protocol/ip/port and DNS rules
-    def match_rules(self, protocol, external_ip_address, external_port, packet, pkt_dir, header):
+    def match_rules(self, protocol, external_ip_address, external_port, packet, pkt_dir, header, header_length):
         # check special case DNS
         is_dns = False
         is_aaaa = False
@@ -288,9 +288,19 @@ class Firewall:
                     udp_header = packet[0:8]
                     dns_data = packet[8:]
 
-                    # set ip header destination to address
-                    # ip_header = ip_header[0:16] + socket.inet_aton("169.229.49.130") + ip_header[20:]
-
+                    # verifying IP checksum
+                    ip_checksum = struct.unpack('!H', ip_header[10:12])[0]
+                    ip_header = ip_header[0:10] + struct.pack('!H', 0) + ip_header[12:]
+                    calculated_ip_checksum = self.calculate_ip_checksum(ip_header, header_length)
+                    if calculated_ip_checksum != ip_checksum:
+                        return False
+                    
+                    # verifying udp checksum
+                    udp_checksum = struct.unpack('!H', udp_header[6:8])[0]
+                    udp_header = udp_header[0:6] + struct.pack('!H', 0)
+                    calculated_udp_checksum = self.calculate_tcp_udp_checksum(ip_header, header_length, udp_header+dns_data)
+                    if calculated_udp_checksum != udp_checksum:
+                        return False
                     # changing QR to 1, TC to 0, not sure about AA, set opcode to 0
                     value = struct.unpack('!B', dns_data[2:3])[0]
                     b = bin(value)[2:].zfill(8)
@@ -327,14 +337,17 @@ class Firewall:
                     new_udp_header_length = 16+len(name)+len(answer)
                     udp_header = udp_header[0:4] + struct.pack('!H', new_udp_header_length) + udp_header[6:]
 
-                    # recalculate udp checksum
-
+                    # recalculate udp checksum, add it back to udp header
+                    recalculated_udp_checksum = self.calculate_tcp_udp_checksum(ip_header, header_length, udp_header+dns_data)
+                    udp_header = udp_header[0:6] + struct.pack('!H', recalculated_udp_checksum)
+                    
                     # change ip total length
                     curr_ip_total_length = struct.unpack('!H', ip_header[2:4])[0]
                     ip_header = ip_header[0:2] + struct.pack('!H', curr_ip_total_length + len(answer)) + ip_header[4:]
 
-                    # recalculate ip checksum
-
+                    # recalculate ip checksum, add it back to ip header
+                    recalculated_ip_checksum = self.calculate_ip_checksum(ip_header, header_length)
+                    ip_header = ip_header[0:10] + struct.pack('!H', recalculated_ip_checksum) + ip_header[12:]
 
                     # create complete dns response packet
                     dns_response_packet = ip_header + udp_header + dns_data
@@ -347,6 +360,20 @@ class Firewall:
                     # deny tcp
                     src_ip = ip_header[12:16]
                     dst_ip = ip_header[16:20]
+
+                    # verifying IP checksum
+                    ip_checksum = struct.unpack('!H', ip_header[10:12])[0]
+                    ip_header = ip_header[0:10] + struct.pack('!H', 0) + ip_header[12:]
+                    calculated_ip_checksum = self.calculate_ip_checksum(ip_header, header_length)
+                    if calculated_ip_checksum != ip_checksum:
+                        return False
+                    
+                    # verifying tcp checksum
+                    tcp_checksum = struct.unpack('!H', packet[16:18])[0]
+                    packet = packet[0:16] + struct.pack('!H', 0) + packet[18:]
+                    calculated_tcp_checksum = self.calculate_tcp_udp_checksum(ip_header, header_length, packet)
+                    if calculated_tcp_checksum != tcp_checksum:
+                        return False
 
                     # swap dst and src ip
                     ip_header = ip_header[0:12] + dst_ip + src_ip + ip_header[20:]
@@ -362,8 +389,20 @@ class Firewall:
                     tcp_flags = tcp_flags[0:5] + '1' + tcp_flags[6:]
                     packet = packet[0:13] + struct.pack('!B', int('0b' + tcp_flags, 2)) + packet[14:]
 
-                    # calculate checksum
+                    # recalculate tcp checksum, add it back into packet
+                    recalculated_tcp_checksum = self.calculate_tcp_udp_checksum(ip_header, header_length, packet)
+                    packet = packet[0:16] + struct.pack('!H', recalculated_tcp_checksum) + packet[18:]
 
+                    # recalculate ip checksum, add it back into header
+                    recalculated_ip_checksum = self.calculate_ip_checksum(ip_header, header_length)
+                    ip_header = ip_header[0:10] + struct.pack('!H', recalculated_ip_checksum) + ip_header[12:] 
+
+                    # create tcp response packet
+                    tcp_response_packet = ip_header + packet
+
+                    # send to internal interface
+                    self.send_packet(PKT_DIR_INCOMING, tcp_response_packet)
+                    return False
             return verdict == "PASS"
 
     # TODO: You can add more methods as you want.
