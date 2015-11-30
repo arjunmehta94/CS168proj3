@@ -125,8 +125,8 @@ class Firewall:
             total += struct.unpack('!H', ip_header[i:i+2])[0]
         while (total >> 16) != 0:
             total = (total & 0xFFFF)+(total >> 16)
-        print total 
-        print ~total & 0xFFFF
+        #print total 
+        #print ~total & 0xFFFF
         return ~total & 0xFFFF
 
     def calculate_tcp_udp_checksum(self, ip_header, ip_header_length, packet):
@@ -221,7 +221,7 @@ class Firewall:
                     i += number + 1
                 #increment i by 1 to get QTYPE
                 name += hex_zero
-                print name
+                #print name
                 i += 1
                 qtype = question[i:i+2]
                 val = struct.unpack('!H',qtype)[0]
@@ -284,9 +284,9 @@ class Firewall:
         else:
             verdict = self.rules_file_list[final_index].split(' ')[0].upper()
             if verdict == "DENY":
-                print "inside deny"
+                #print "inside deny"
                 if is_dns:
-                    print "inside dns"
+                    #print "inside dns"
                     if is_aaaa:
                         return False
                     udp_header = packet[0:8]
@@ -329,19 +329,35 @@ class Firewall:
                     dns_data = dns_data[0:8] + struct.pack('!H', 0) + struct.pack('!H', 0) + dns_data[12:]
 
                     # creating answer section
+                    #print len(name)
                     answer += name # set the name
+                    #print answer
                     answer += struct.pack('!H', 1) # set the type to 1, A
+                    #print answer
                     answer += struct.pack('!H', 1) # set the class to 1, IN
+                    #print answer
                     answer += struct.pack('!L', 1) # set the TTL to 1
+                    #print answer
                     answer += struct.pack('!H', 4) # set RDLENGTH to 4
+                    #print answer
                     answer += struct.pack('!L', int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in '169.229.49.130'.split('.')]) , 2)) # set RDATA to 169.229.49.130
-
+                    #print answer
                     # add on answer section
-                    dns_data = dns_data[0:17 + len(name)] + answer + dns_data[17+len(name)+len(answer):]
-
+                    dns_data = dns_data[0:16 + len(name)] + answer #+ dns_data[16+len(name)+len(answer):]
+                    #print dns_data
                     # change udp_header length
-                    new_udp_header_length = 16+len(name)+len(answer)
+                    new_udp_header_length = 16+len(name)+len(answer) # 12 bytes udp header + (name + 4 bytes) question + answer
                     udp_header = udp_header[0:4] + struct.pack('!H', new_udp_header_length) + udp_header[6:]
+
+                    # switch src and dst ip address
+                    src_ip = ip_header[12:16]
+                    dst_ip = ip_header[16:20]
+
+                    ip_header = ip_header[0:12] + dst_ip + src_ip + ip_header[20:]
+                    # switch src and dst ports in udp header
+                    src_port = udp_header[0:2]
+                    dst_port = udp_header[2:4]
+                    udp_header = dst_port + src_port + udp_header[4:]
 
                     # recalculate udp checksum, add it back to udp header
                     recalculated_udp_checksum = self.calculate_tcp_udp_checksum(ip_header, header_length, udp_header+dns_data)
@@ -392,7 +408,7 @@ class Firewall:
                     packet = dst_port + src_port + packet[4:]
 
                     # set RST flag to 1
-                    tcp_flags = struct.unpack('!B', packet[13:14])[0]
+                    tcp_flags = bin(struct.unpack('!B', packet[13:14])[0])[2:]
                     tcp_flags = tcp_flags[0:5] + '1' + tcp_flags[6:]
                     packet = packet[0:13] + struct.pack('!B', int('0b' + tcp_flags, 2)) + packet[14:]
 
@@ -408,7 +424,7 @@ class Firewall:
                     tcp_response_packet = ip_header + packet
 
                     # send to internal interface
-                    self.send_packet(PKT_DIR_INCOMING, tcp_response_packet)
+                    self.send_packet(pkt_dir, tcp_response_packet)
                     return False
             return verdict == "PASS"
 
