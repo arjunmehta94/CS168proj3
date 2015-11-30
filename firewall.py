@@ -116,15 +116,18 @@ class Firewall:
     def calculate_ip_checksum(self, ip_header, header_length):
         total = 0
         i = 0
-        while i != header_length:
+        while i < header_length:
             two_byte_chunk = struct.unpack('!H', ip_header[i:i+2])[0]
             total += two_byte_chunk
             i += 2
-        if i != header_length:
-            total += struct.unpack('!H', ip_header[i:i+1])[0]
+        if header_length % 2 != 0:
+            ip_header += struct.pack('!B', 0)
+            total += struct.unpack('!H', ip_header[i:i+2])[0]
         while (total >> 16) != 0:
             total = (total & 0xFFFF)+(total >> 16)
-        return ~total
+        print total 
+        print ~total & 0xFFFF
+        return ~total & 0xFFFF
 
     def calculate_tcp_udp_checksum(self, ip_header, ip_header_length, packet):
         #construct pseudo_header - src address, dst address, zeros, protocol number, tcp length
@@ -218,6 +221,7 @@ class Firewall:
                     i += number + 1
                 #increment i by 1 to get QTYPE
                 name += hex_zero
+                print name
                 i += 1
                 qtype = question[i:i+2]
                 val = struct.unpack('!H',qtype)[0]
@@ -280,27 +284,29 @@ class Firewall:
         else:
             verdict = self.rules_file_list[final_index].split(' ')[0].upper()
             if verdict == "DENY":
-                #print "inside deny"
+                print "inside deny"
                 if is_dns:
-                    #print "inside dns"
+                    print "inside dns"
                     if is_aaaa:
                         return False
                     udp_header = packet[0:8]
                     dns_data = packet[8:]
 
                     # verifying IP checksum
-                    ip_checksum = struct.unpack('!H', ip_header[10:12])[0]
-                    ip_header = ip_header[0:10] + struct.pack('!H', 0) + ip_header[12:]
-                    calculated_ip_checksum = self.calculate_ip_checksum(ip_header, header_length)
-                    if calculated_ip_checksum != ip_checksum:
-                        return False
+                    # ip_checksum = struct.unpack('!H', ip_header[10:12])[0]
+                    # ip_header = ip_header[0:10] + struct.pack('!H', 0) + ip_header[12:]
+                    # calculated_ip_checksum = self.calculate_ip_checksum(ip_header, header_length)
+                    # if calculated_ip_checksum != ip_checksum:
+                    #     print "in ip checksum"
+                    #     return False
                     
                     # verifying udp checksum
-                    udp_checksum = struct.unpack('!H', udp_header[6:8])[0]
-                    udp_header = udp_header[0:6] + struct.pack('!H', 0)
-                    calculated_udp_checksum = self.calculate_tcp_udp_checksum(ip_header, header_length, udp_header+dns_data)
-                    if calculated_udp_checksum != udp_checksum:
-                        return False
+                    # udp_checksum = struct.unpack('!H', udp_header[6:8])[0]
+                    # udp_header = udp_header[0:6] + struct.pack('!H', 0)
+                    # calculated_udp_checksum = self.calculate_tcp_udp_checksum(ip_header, header_length, udp_header+dns_data)
+                    # if calculated_udp_checksum != udp_checksum:
+                    #     print "in udp checksum"
+                    #     return False
                     # changing QR to 1, TC to 0, not sure about AA, set opcode to 0
                     value = struct.unpack('!B', dns_data[2:3])[0]
                     b = bin(value)[2:].zfill(8)
@@ -339,6 +345,7 @@ class Firewall:
 
                     # recalculate udp checksum, add it back to udp header
                     recalculated_udp_checksum = self.calculate_tcp_udp_checksum(ip_header, header_length, udp_header+dns_data)
+                    #print recalculated_udp_checksum
                     udp_header = udp_header[0:6] + struct.pack('!H', recalculated_udp_checksum)
                     
                     # change ip total length
