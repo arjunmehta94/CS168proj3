@@ -13,6 +13,7 @@ class Firewall:
         self.iface_ext = iface_ext
         self.protocol_dict = {'ICMP':1, 'TCP':6, 'UDP':17}
         self.http_request_type = ["GET", "POST", "PUT", "DROP"]
+        self.http_connections = {} # {(src port, dst port, src ip, dst ip): {'request':[curr_seq, data...], 'response':[curr_seq]}}
         # Load the firewall rules (from rule_filename) here.
         rules_file = open(config['rule'], 'r')
         rules_file_text = rules_file.read()
@@ -271,7 +272,6 @@ class Firewall:
         for rule in range(len(self.rules_file_list)):
             rule_split = self.rules_file_list[rule].split(' ')
             rule_protocol = rule_split[1].upper()
-            verdict = rule_split[0].upper()
             #check and apply dns rules if rule is type dns
             if rule_protocol == "DNS":
                 if is_dns:
@@ -309,6 +309,41 @@ class Firewall:
                     match_address_result = self.match_address(rule_split[2], external_ip_address)
                     if match_address_result:
                         final_index = rule
+            
+            #match to log http
+            elif rule_protocol == "HTTP":
+                match_port_result = self.match_port("80", external_port)
+                # check if HTTP REQUEST, if so, set request_host_name
+                tcp_offset = packet[12:13]
+                tcp_offset = struct.unpack('!B', tcp_offset)[0]
+                tcp_offset = bin(tcp_offset)[2:].zfill(8)[:4]
+                tcp_offset = int('0b' + tcp_offset, 2) * 4
+                #print packet[tcp_offset:]
+                tcp_data = packet[tcp_offset:]
+                #print tcp_data
+                src_ip = ip_header[12:16]
+                dst_ip = ip_header[16:20]
+                src_port = packet[0:2]
+                dst_port = packet[2:4]
+                dictionary_tuple = (src_ip, dst_ip, src_port, dst_port)
+                data = ''
+                i = 0
+                while tcp_data[i:i+2] != "\r\n\r\n" and i<len(tcp_data):
+                    #print len(data), data
+
+                    data += tcp_data[i]
+                    i += 1
+                data = data.split('\n')
+                if dictionary_tuple not in self.http_connections:
+                    self.http_connections[dictionary_tuple] = [data]
+                print len(data)
+                print data
+
+                request_host_name = ''
+                match_address_result = self.match_address(rule_split[2], request_host_name)
+                if match_port_result and match_address_result:
+                    final_index = rule
+
             #any rule other than dns, i.e. icmp, tcp, udp
             elif self.protocol_dict[rule_protocol] == protocol:
                 #checking external port and checking external address, if they match, this rule correctly applies
@@ -316,16 +351,6 @@ class Firewall:
                 match_address_result = self.match_address(rule_split[2], external_ip_address)
                 if match_port_result and match_address_result:
                     final_index = rule
-            #match to log http
-            elif rule_protocol == "HTTP":
-                match_port_result = self.match_port(80, external_port)
-                # check if HTTP REQUEST, if so, set request_host_name
-                
-                request_host_name = ''
-                match_address_result = self.match_address_result(rule_split[2], request_host_name)
-                if match_port_result and match_address_result:
-                    final_index = rule
-
         if final_index == -1:
             return True
         else:
@@ -469,7 +494,7 @@ class Firewall:
                     ack_no = seq_no + 1
                     packet = packet[0:8] + struct.pack('!L', ack_no) + packet[12:]
 
-                    # recalculate tcp checksum, add it back into packet
+                    # recalculate tcp checksum, add it back into packet, NOT SURE ABOUT TCP CHECKSUM
                     recalculated_tcp_checksum = self.calculate_tcp_udp_checksum(ip_header, header_length, packet)
                     packet = packet[0:16] + struct.pack('!H', recalculated_tcp_checksum) + packet[18:]
 
