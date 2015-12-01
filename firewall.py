@@ -12,6 +12,7 @@ class Firewall:
         self.iface_int = iface_int
         self.iface_ext = iface_ext
         self.protocol_dict = {'ICMP':1, 'TCP':6, 'UDP':17}
+        self.http_request_type = ["GET", "POST", "PUT", "DROP"]
         # Load the firewall rules (from rule_filename) here.
         rules_file = open(config['rule'], 'r')
         rules_file_text = rules_file.read()
@@ -144,7 +145,17 @@ class Firewall:
         packet_to_checksum = pseudo_header + packet
         return self.calculate_ip_checksum(packet_to_checksum, total_length + 12)
 
-
+    def is_valid_ip(self, address):
+        parts = address.split('.')
+        if len(parts) != 4:
+            return False
+        for part in parts:
+            try:
+                if int(part) < 0 or int(part) > 255:
+                    return False
+            except ValueError:
+                return False
+        return True
 
     #returns true if port matches, else false
     def match_port(self, rule_port, external_port):
@@ -186,8 +197,30 @@ class Firewall:
                 external_address_val = int('0b' + ''.join([bin(int(x))[2:].zfill(8) for x in external_address.split('.')]) , 2) 
                 return self.binary_search(external_address_val, country_addresses, 0, len(country_addresses)-1)
             # check for single IP address
-            elif rule_address != external_address:
-                return False
+            elif self.is_valid_ip(rule_address) and self.is_valid_ip(external_address):
+                if rule_address != external_address:
+                    return False
+            # check for domain name matching
+            else:
+                # if no * in front, compare lengths
+                rule_address_split = rule_address.split('.')
+                external_address_split = external_address.split('.')
+                if rule_address[0] != '*':
+                    return rule_address_split == external_address_split
+                # if * in front
+                if rule_address[0] == '*':
+                    rule_address = rule_address[1:]
+                if rule_address != '':
+                    rule_address_split = rule_address.split('.')
+                    if rule_address_split[0] == '':
+                        rule_address_split = rule_address_split[1:]
+                    if len(rule_address_split) == len(external_address_split):
+                        return False
+                    if rule_address_split == external_address_split[-len(rule_address_split):]:
+                        return True
+                    return False
+                else:
+                    return True
         return True
     
     # helper that returns either true for pass or false for drop, based on protocol/ip/port and DNS rules
@@ -238,6 +271,7 @@ class Firewall:
         for rule in range(len(self.rules_file_list)):
             rule_split = self.rules_file_list[rule].split(' ')
             rule_protocol = rule_split[1].upper()
+            verdict = rule_split[0].upper()
             #check and apply dns rules if rule is type dns
             if rule_protocol == "DNS":
                 if is_dns:
@@ -250,6 +284,9 @@ class Firewall:
                         domain = domain[1:]
                     # if domain was only '*', then it should match
                     # with ALL addresses
+
+                    #################### NOTE ######################
+                    # need to add stuff here, since *.foo.com does NOT match foo.com, consult match_address#
                     if domain != '':
                         domain_split = domain.split('.')
                         if domain_split[0] == '':
@@ -279,6 +316,16 @@ class Firewall:
                 match_address_result = self.match_address(rule_split[2], external_ip_address)
                 if match_port_result and match_address_result:
                     final_index = rule
+            #match to log http
+            elif rule_protocol == "HTTP":
+                match_port_result = self.match_port(80, external_port)
+                # check if HTTP REQUEST, if so, set request_host_name
+                
+                request_host_name = ''
+                match_address_result = self.match_address_result(rule_split[2], request_host_name)
+                if match_port_result and match_address_result:
+                    final_index = rule
+
         if final_index == -1:
             return True
         else:
