@@ -346,9 +346,9 @@ class Firewall:
                     dns_data = dns_data[0:16 + len(name)] + answer + dns_data[16+len(name)+len(answer):]
                     #print dns_data
                     # change udp_header length
-                    new_udp_header_length = 16+len(name)+len(answer) # 12 bytes udp header + (name + 4 bytes) question + answer
-                    udp_header = udp_header[0:4] + struct.pack('!H', original_udp_length+len(answer)) + udp_header[6:]
-
+                    new_udp_header_length = 24+len(name)+len(answer) # 12 bytes udp header + (name + 4 bytes) question + answer
+                    #udp_header = udp_header[0:4] + struct.pack('!H', original_udp_length+len(answer)) + udp_header[6:]
+                    udp_header = udp_header[0:4] + struct.pack('!H', new_udp_header_length) + udp_header[6:]
                     # switch src and dst ip address
                     src_ip = ip_header[12:16]
                     dst_ip = ip_header[16:20]
@@ -362,13 +362,15 @@ class Firewall:
                     # recalculate udp checksum, add it back to udp header
                     recalculated_udp_checksum = self.calculate_tcp_udp_checksum(ip_header, header_length, udp_header+dns_data)
                     #print recalculated_udp_checksum
-                    udp_header = udp_header[0:6] + struct.pack('!H', recalculated_udp_checksum)
+                    udp_header = udp_header[0:6] + struct.pack('!H', 0)
                     
                     # change ip total length
                     curr_ip_total_length = struct.unpack('!H', ip_header[2:4])[0]
                     #print curr_ip_total_length
-                    curr_ip_total_length += len(answer)
-                    ip_header = ip_header[0:2] + struct.pack('!H', curr_ip_total_length) + ip_header[4:]
+                    #curr_ip_total_length += len(answer)
+                    new_ip_header_length = new_udp_header_length + header_length
+                    #ip_header = ip_header[0:2] + struct.pack('!H', curr_ip_total_length) + ip_header[4:]
+                    ip_header = ip_header[0:2] + struct.pack('!H', new_ip_header_length) + ip_header[4:]
                     #print (curr_ip_total_length + len(answer))
                     # recalculate ip checksum, add it back to ip header
                     recalculated_ip_checksum = self.calculate_ip_checksum(ip_header, header_length)
