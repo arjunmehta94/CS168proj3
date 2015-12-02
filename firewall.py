@@ -11,9 +11,14 @@ class Firewall:
     def __init__(self, config, iface_int, iface_ext):
         self.iface_int = iface_int
         self.iface_ext = iface_ext
-        self.protocol_dict = {'ICMP':1, 'TCP':6, 'UDP':17}
+        self.protocol_dict = {'ICMP':1, 'TCP':6, 'UDP':17, "HTTP":-1}
         self.http_request_type = ["GET", "POST", "PUT", "DROP"]
-        self.http_connections = {} # {(src port, dst port, src ip, dst ip): {'request':[curr_seq, data...], 'response':[curr_seq]}}
+        self.http_version_number = ["HTTP/1.1", "HTTP/1.0"]
+        self.CRLF = "\r\n\r\n"
+        # maps (connections) --> [[request_expected_seq, data], [response_expected_seq, data]]
+        # request: (src_ip, dst_ip, src_port, dst_port)
+        # response: (dst_ip, src_ip, dst_port, src_port) 
+        self.http_connections = {} 
         # Load the firewall rules (from rule_filename) here.
         rules_file = open(config['rule'], 'r')
         rules_file_text = rules_file.read()
@@ -311,36 +316,118 @@ class Firewall:
                         final_index = rule
             
             #match to log http
-            elif rule_protocol == "HTTP":
+            elif rule_protocol == "HTTP" and self.protocol_dict["TCP"] == protocol:
+                #print "http case"
                 match_port_result = self.match_port("80", external_port)
+                request_host_name = ''
+                if not match_port_result:
+                    continue
                 # check if HTTP REQUEST, if so, set request_host_name
                 tcp_offset = packet[12:13]
                 tcp_offset = struct.unpack('!B', tcp_offset)[0]
                 tcp_offset = bin(tcp_offset)[2:].zfill(8)[:4]
                 tcp_offset = int('0b' + tcp_offset, 2) * 4
-                #print packet[tcp_offset:]
-                tcp_data = packet[tcp_offset:]
-                #print tcp_data
                 src_ip = ip_header[12:16]
                 dst_ip = ip_header[16:20]
                 src_port = packet[0:2]
                 dst_port = packet[2:4]
-                dictionary_tuple = (src_ip, dst_ip, src_port, dst_port)
-                data = ''
-                i = 0
-                while tcp_data[i:i+2] != "\r\n\r\n" and i<len(tcp_data):
-                    #print len(data), data
-
-                    data += tcp_data[i]
-                    i += 1
-                data = data.split('\n')
-                if dictionary_tuple not in self.http_connections:
-                    self.http_connections[dictionary_tuple] = [data]
-                print len(data)
-                print data
-
-                request_host_name = ''
+                # incoming --> response, outgoing --> request
+                seq_no = struct.unpack('!L', packet[4:8])[0]
+                ack_no = struct.unpack('!L', packet[8:12])[0]
+                tcp_data = packet[tcp_offset:]
+                if pkt_dir == PKT_DIR_OUTGOING:
+                    #print "request"
+                    http_tuple = (src_ip, dst_ip, src_port, dst_port)     
+                else:
+                    http_tuple = (dst_ip, src_ip, dst_port, src_port)
+                if http_tuple not in self.http_connections:
+                    #print seq_no
+                    #print "new connection"
+                    print http_tuple
+                    self.http_connections[http_tuple] = [[-1, ''],[-1, ''], []]
+                    ### LET SYN PACKET PASS, NOT SURE IF THiS IS RIGHT.
+                    return True
+                # if its a SYN-ACK, i.e. response, set the EXPECTED REQUEST NUMBER
+                if self.http_connections[http_tuple][0][0] == -1 and pkt_dir == PKT_DIR_INCOMING:
+                    #print "SYN-ACK"
+                    self.http_connections[http_tuple][0][0] = ack_no
+                #### DONT KNOW WHAT TO DO IF SYN PACKETS ARE DROPPED, DOES THE ISN CHANGE??? ###
+                # if its the SECOND request, i.e. ACK to the SYN-ACK, set the EXPECTED RESPONSE NUMBER
+                elif self.http_connections[http_tuple][1][0] == -1 and pkt_dir == PKT_DIR_OUTGOING:
+                    #print "ACK to SYN-ACK"
+                    self.http_connections[http_tuple][1][0] = ack_no
+                # if its a general request
+                elif pkt_dir == PKT_DIR_OUTGOING:
+                    if seq_no > self.http_connections[http_tuple][0][0]:
+                        return False
+                    elif seq_no < self.http_connections[http_tuple][0][0]:
+                        return True
+                    else:
+                        # do request stuff
+                        self.http_connections[http_tuple][0][1] += tcp_data
+                        if self.CRLF in self.http_connections[http_tuple][0][1]:
+                            #print "got the header in request"
+                            index_of_CRLF = self.http_connections[http_tuple][0][1].index(self.CRLF)
+                            request_header = self.http_connections[http_tuple][0][1][:index_of_CRLF]
+                            data = request_header.split('\r\n')
+                            while '' in data:
+                                data.remove('')
+                            #print data
+                            for field in data:
+                                field_split = field.split(' ')
+                                if field_split[0] in self.http_request_type:
+                                    if field_split[0] not in self.http_connections[http_tuple][2]:
+                                        self.http_connections[http_tuple][2].append(field_split[0])
+                                    if field_split[1] not in self.http_connections[http_tuple][2]:
+                                        self.http_connections[http_tuple][2].append(field_split[1])
+                                    if field_split[2] not in self.http_connections[http_tuple][2]:
+                                        self.http_connections[http_tuple][2].append(field_split[2])
+                                if field_split[0].upper() == "HOST:":
+                                    request_host_name = field_split[1]
+                                    #print request_host_name
+                                    if field_split[1] not in self.http_connections[http_tuple][2]:
+                                        self.http_connections[http_tuple][2] = [field_split[1]] + self.http_connections[http_tuple][2]
+                            if request_host_name == '':
+                                request_host_name = external_ip_address
+                                if external_ip_address not in self.http_connections[http_tuple][2]:
+                                    self.http_connections[http_tuple][2] = [external_ip_address] + self.http_connections[http_tuple][2]
+                        # set the EXPECTED RESPONSE NUMBER to the ack
+                        #print ack_no
+                        self.http_connections[http_tuple][1][0] = ack_no
+                        
+                # if its a general response
+                elif pkt_dir == PKT_DIR_INCOMING:
+                    if seq_no > self.http_connections[http_tuple][1][0]:
+                        return False
+                    elif seq_no < self.http_connections[http_tuple][1][0]:
+                        return True
+                    else:
+                        # do response stuff
+                        self.http_connections[http_tuple][1][1] += tcp_data
+                        if self.CRLF in self.http_connections[http_tuple][1][1]:
+                            #print "got the header in response"
+                            index_of_CRLF = self.http_connections[http_tuple][1][1].index(self.CRLF)
+                            response_header = self.http_connections[http_tuple][1][1][:index_of_CRLF]
+                            data = response_header.split('\r\n')
+                            while '' in data:
+                                data.remove('')
+                            #print data
+                            for field in data:
+                                field_split = field.split(' ')
+                                if field_split[0] in self.http_version_number:
+                                    if field_split[1] not in self.http_connections[http_tuple][2]:
+                                        self.http_connections[http_tuple][2].append(field_split[1])
+                                if field_split[0].upper() == "CONTENT-LENGTH:":
+                                    if field_split[1] not in self.http_connections[http_tuple][2]:
+                                        self.http_connections[http_tuple][2].append(field_split[1])
+                            if len(self.http_connections[http_tuple][2]) < 6:
+                                if "-1" not in self.http_connections[http_tuple][2]:
+                                    self.http_connections[http_tuple][2].append("-1")
+                        # set the EXPECTED REQUEST NUMBER to the ack
+                        self.http_connections[http_tuple][0][0] = ack_no
+                #print self.http_connections[http_tuple][2]
                 match_address_result = self.match_address(rule_split[2], request_host_name)
+                print match_address_result
                 if match_port_result and match_address_result:
                     final_index = rule
 
@@ -355,6 +442,7 @@ class Firewall:
             return True
         else:
             verdict = self.rules_file_list[final_index].split(' ')[0].upper()
+
             if verdict == "DENY":
                 #print "inside deny"
                 if is_dns:
@@ -514,6 +602,30 @@ class Firewall:
                     self.send_packet(pkt_dir, tcp_response_packet)
                     #print "tcp sent"
                     return False
+            elif verdict == "LOG":
+                src_ip = ip_header[12:16]
+                dst_ip = ip_header[16:20]
+                src_port = packet[0:2]
+                dst_port = packet[2:4]
+                if pkt_dir == PKT_DIR_OUTGOING:
+                    http_tuple = (src_ip, dst_ip, src_port, dst_port)     
+                else:
+                    http_tuple = (dst_ip, src_ip, dst_port, src_port)
+                # check if loggable
+                print "length: " + str(len(self.http_connections[http_tuple][2]))
+                if len(self.http_connections[http_tuple][2]) == 6:
+                    print "logging"
+                    f = open("http.log", 'a')
+                    # log it
+                    log_result = ' '.join(self.http_connections[http_tuple][2]) + '\n'
+                    f.write(log_result)
+                    f.flush()
+                    f.close()
+                    # clear request/response data from dictionary, NOT SURE IF WE LEAVE EXPECTED SEQUENCE NUMBERS UNCHANGED
+                    self.http_connections[http_tuple][2] = []
+                    self.http_connections[http_tuple][0][1] = ''
+                    self.http_connections[http_tuple][1][1] = ''
+                return True
             return verdict == "PASS"
 
     # TODO: You can add more methods as you want.
