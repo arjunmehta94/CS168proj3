@@ -321,12 +321,14 @@ class Firewall:
                 match_port_result = self.match_port("80", external_port)
                 request_host_name = ''
                 if not match_port_result:
+                    #print "continuing"
                     continue
                 # check if HTTP REQUEST, if so, set request_host_name
                 tcp_offset = packet[12:13]
                 tcp_offset = struct.unpack('!B', tcp_offset)[0]
                 tcp_offset = bin(tcp_offset)[2:].zfill(8)[:4]
                 tcp_offset = int('0b' + tcp_offset, 2) * 4
+                tcp_flags = bin(struct.unpack('!B', packet[13:14])[0])[2:].zfill(8)
                 src_ip = ip_header[12:16]
                 dst_ip = ip_header[16:20]
                 src_port = packet[0:2]
@@ -336,28 +338,43 @@ class Firewall:
                 ack_no = struct.unpack('!L', packet[8:12])[0]
                 tcp_data = packet[tcp_offset:]
                 if pkt_dir == PKT_DIR_OUTGOING:
-                    #print "request"
+                    #print "outgoing"
                     http_tuple = (src_ip, dst_ip, src_port, dst_port)     
                 else:
+                    #print "incoming"
                     http_tuple = (dst_ip, src_ip, dst_port, src_port)
+
                 if http_tuple not in self.http_connections:
-                    #print seq_no
+                    #print "syn seq_no " + str(seq_no)
                     #print "new connection"
-                    print http_tuple
+                    #print http_tuple
                     self.http_connections[http_tuple] = [[-1, ''],[-1, ''], []]
                     ### LET SYN PACKET PASS, NOT SURE IF THiS IS RIGHT.
                     return True
                 # if its a SYN-ACK, i.e. response, set the EXPECTED REQUEST NUMBER
+                # if tcp_flags[3] == '1' and tcp_flags[6] == '1':
+                #     if self.http_connections[http_tuple][0][0] == -1 and pkt_dir == PKT_DIR_INCOMING:
+                #         self.http_connections[http_tuple][0][0] = ack_no
+
                 if self.http_connections[http_tuple][0][0] == -1 and pkt_dir == PKT_DIR_INCOMING:
                     #print "SYN-ACK"
+                    #print "seqno for syn_ack " + str(seq_no)
+                    #print "ack_num " + str(ack_no)
                     self.http_connections[http_tuple][0][0] = ack_no
+                    return True
                 #### DONT KNOW WHAT TO DO IF SYN PACKETS ARE DROPPED, DOES THE ISN CHANGE??? ###
                 # if its the SECOND request, i.e. ACK to the SYN-ACK, set the EXPECTED RESPONSE NUMBER
                 elif self.http_connections[http_tuple][1][0] == -1 and pkt_dir == PKT_DIR_OUTGOING:
                     #print "ACK to SYN-ACK"
+                    #print "ack_no " + str(ack_no)
                     self.http_connections[http_tuple][1][0] = ack_no
+                    return True
                 # if its a general request
-                elif pkt_dir == PKT_DIR_OUTGOING:
+                elif pkt_dir == PKT_DIR_OUTGOING :
+                    #print "general request"
+                    #print "expected request: " + str(self.http_connections[http_tuple][0][0])
+                    # if self.http_connections[http_tuple][0][0] == -1:
+                    #     self.http_connections[http_tuple][0][0] = ack_no
                     if seq_no > self.http_connections[http_tuple][0][0]:
                         return False
                     elif seq_no < self.http_connections[http_tuple][0][0]:
@@ -397,9 +414,17 @@ class Firewall:
                         
                 # if its a general response
                 elif pkt_dir == PKT_DIR_INCOMING:
+                    #print "general response"
+                    #print "expected response: " + str(self.http_connections[http_tuple][1][0])
+                    # if self.http_connections[http_tuple][1][0] == -1:
+                    #     self.http_connections[http_tuple][1][0] = ack_no
+                    #print "seqno " + str(seq_no)
+                    #print self.http_connections[http_tuple][1][0]
                     if seq_no > self.http_connections[http_tuple][1][0]:
+                        #Fprint "returning"
                         return False
                     elif seq_no < self.http_connections[http_tuple][1][0]:
+                        #print "return"
                         return True
                     else:
                         # do response stuff
@@ -427,7 +452,9 @@ class Firewall:
                         self.http_connections[http_tuple][0][0] = ack_no
                 #print self.http_connections[http_tuple][2]
                 match_address_result = self.match_address(rule_split[2], request_host_name)
-                print match_address_result
+                #print rule_split[2] + " " + request_host_name
+                #print match_address_result
+                #print match_port_result
                 if match_port_result and match_address_result:
                     final_index = rule
 
@@ -439,10 +466,11 @@ class Firewall:
                 if match_port_result and match_address_result:
                     final_index = rule
         if final_index == -1:
+            #print "coming here"
             return True
         else:
             verdict = self.rules_file_list[final_index].split(' ')[0].upper()
-
+            #print verdict
             if verdict == "DENY":
                 #print "inside deny"
                 if is_dns:
@@ -603,6 +631,7 @@ class Firewall:
                     #print "tcp sent"
                     return False
             elif verdict == "LOG":
+                #print "in log case"
                 src_ip = ip_header[12:16]
                 dst_ip = ip_header[16:20]
                 src_port = packet[0:2]
@@ -612,9 +641,9 @@ class Firewall:
                 else:
                     http_tuple = (dst_ip, src_ip, dst_port, src_port)
                 # check if loggable
-                print "length: " + str(len(self.http_connections[http_tuple][2]))
+                #print "length: " + str(len(self.http_connections[http_tuple][2]))
                 if len(self.http_connections[http_tuple][2]) == 6:
-                    print "logging"
+                    #print "logging"
                     f = open("http.log", 'a')
                     # log it
                     log_result = ' '.join(self.http_connections[http_tuple][2]) + '\n'
@@ -622,9 +651,12 @@ class Firewall:
                     f.flush()
                     f.close()
                     # clear request/response data from dictionary, NOT SURE IF WE LEAVE EXPECTED SEQUENCE NUMBERS UNCHANGED
+                    last_val = self.http_connections[http_tuple][2][-1]
                     self.http_connections[http_tuple][2] = []
                     self.http_connections[http_tuple][0][1] = ''
                     self.http_connections[http_tuple][1][1] = ''
+                    if int(last_val) == -1:
+                        del self.http_connections[http_tuple]
                 return True
             return verdict == "PASS"
 
