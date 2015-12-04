@@ -209,6 +209,8 @@ class Firewall:
             # check for domain name matching
             else:
                 # if no * in front, compare lengths
+                rule_address = rule_address.upper()
+                external_address = external_address.upper()
                 rule_address_split = rule_address.split('.')
                 external_address_split = external_address.split('.')
                 if rule_address[0] != '*':
@@ -333,6 +335,13 @@ class Firewall:
                 dst_ip = ip_header[16:20]
                 src_port = packet[0:2]
                 dst_port = packet[2:4]
+
+                if pkt_dir == PKT_DIR_OUTGOING:
+                    if tcp_flags[7] == '1':
+                        http_tuple = (src_ip, dst_ip, src_port, dst_port)
+                        if http_tuple in self.http_connections:
+                            del self.http_connections[http_tuple]
+                        return True
                 # incoming --> response, outgoing --> request
                 seq_no = struct.unpack('!L', packet[4:8])[0]
                 ack_no = struct.unpack('!L', packet[8:12])[0]
@@ -348,7 +357,7 @@ class Firewall:
                     #print "syn seq_no " + str(seq_no)
                     #print "new connection"
                     #print http_tuple
-                    self.http_connections[http_tuple] = [[-1, ''],[-1, ''], []]
+                    self.http_connections[http_tuple] = [[-1, ''],[-1, ''], [], {"host_name": "", "method": "", "path": "", "version": "", "status_code": "", "object_size": ""}]
                     ### LET SYN PACKET PASS, NOT SURE IF THiS IS RIGHT.
                     return True
                 # if its a SYN-ACK, i.e. response, set the EXPECTED REQUEST NUMBER
@@ -370,7 +379,7 @@ class Firewall:
                     self.http_connections[http_tuple][1][0] = ack_no
                     return True
                 # if its a general request
-                elif pkt_dir == PKT_DIR_OUTGOING :
+                elif pkt_dir == PKT_DIR_OUTGOING:
                     #print "general request"
                     #print "expected request: " + str(self.http_connections[http_tuple][0][0])
                     # if self.http_connections[http_tuple][0][0] == -1:
@@ -390,24 +399,35 @@ class Firewall:
                             while '' in data:
                                 data.remove('')
                             #print data
+                            current_dict = self.http_connections[http_tuple][3]
                             for field in data:
                                 field_split = field.split(' ')
-                                if field_split[0] in self.http_request_type:
-                                    if field_split[0] not in self.http_connections[http_tuple][2]:
-                                        self.http_connections[http_tuple][2].append(field_split[0])
-                                    if field_split[1] not in self.http_connections[http_tuple][2]:
-                                        self.http_connections[http_tuple][2].append(field_split[1])
-                                    if field_split[2] not in self.http_connections[http_tuple][2]:
-                                        self.http_connections[http_tuple][2].append(field_split[2])
+                                if field_split[0].upper() in self.http_request_type:
+                                    if current_dict["method"] == "":
+                                        current_dict["method"] = field_split[0]
+                                    if current_dict["path"] == "":
+                                        current_dict["path"] = field_split[1]
+                                    if current_dict["version"] == "":
+                                        current_dict["version"] = field_split[2]
+                                    # if field_split[0] not in self.http_connections[http_tuple][2]:
+                                    #     self.http_connections[http_tuple][2].append(field_split[0])
+                                    # if field_split[1] not in self.http_connections[http_tuple][2]:
+                                    #     self.http_connections[http_tuple][2].append(field_split[1])
+                                    # if field_split[2] not in self.http_connections[http_tuple][2]:
+                                    #     self.http_connections[http_tuple][2].append(field_split[2])
                                 if field_split[0].upper() == "HOST:":
                                     request_host_name = field_split[1]
                                     #print request_host_name
-                                    if field_split[1] not in self.http_connections[http_tuple][2]:
-                                        self.http_connections[http_tuple][2] = [field_split[1]] + self.http_connections[http_tuple][2]
+                                    if current_dict["host_name"] == "":
+                                        current_dict["host_name"] = request_host_name
+                                    # if field_split[1] not in self.http_connections[http_tuple][2]:
+                                    #     self.http_connections[http_tuple][2] = [field_split[1]] + self.http_connections[http_tuple][2]
                             if request_host_name == '':
                                 request_host_name = external_ip_address
-                                if external_ip_address not in self.http_connections[http_tuple][2]:
-                                    self.http_connections[http_tuple][2] = [external_ip_address] + self.http_connections[http_tuple][2]
+                                if current_dict["host_name"] == "":
+                                    current_dict["host_name"] = external_ip_address
+                                # if external_ip_address not in self.http_connections[http_tuple][2]:
+                                #     self.http_connections[http_tuple][2] = [external_ip_address] + self.http_connections[http_tuple][2]
                         # set the EXPECTED RESPONSE NUMBER to the ack
                         #print ack_no
                         self.http_connections[http_tuple][1][0] = ack_no
@@ -437,20 +457,29 @@ class Firewall:
                             while '' in data:
                                 data.remove('')
                             #print data
+                            current_dict = self.http_connections[http_tuple][3]
                             for field in data:
                                 field_split = field.split(' ')
-                                if field_split[0] in self.http_version_number:
-                                    if field_split[1] not in self.http_connections[http_tuple][2]:
-                                        self.http_connections[http_tuple][2].append(field_split[1])
+                                if field_split[0].upper() in self.http_version_number:
+                                    if current_dict["status_code"] == "":
+                                        current_dict["status_code"] = field_split[1]
+                                    # if field_split[1] not in self.http_connections[http_tuple][2]:
+                                    #     self.http_connections[http_tuple][2].append(field_split[1])
                                 if field_split[0].upper() == "CONTENT-LENGTH:":
-                                    if field_split[1] not in self.http_connections[http_tuple][2]:
-                                        self.http_connections[http_tuple][2].append(field_split[1])
-                            if len(self.http_connections[http_tuple][2]) < 6:
-                                if "-1" not in self.http_connections[http_tuple][2]:
-                                    self.http_connections[http_tuple][2].append("-1")
+                                    if current_dict["object_size"] == "":
+                                        current_dict["object_size"] = field_split[1]
+                                    # if field_split[1] not in self.http_connections[http_tuple][2]:
+                                    #     self.http_connections[http_tuple][2].append(field_split[1])
+
+                            # if len(self.http_connections[http_tuple][2]) < 6:
+                            if current_dict["object_size"] == "":
+                                current_dict["object_size"] = "-1"
+                                # if "-1" not in self.http_connections[http_tuple][2]:
+                                #     self.http_connections[http_tuple][2].append("-1")
                         # set the EXPECTED REQUEST NUMBER to the ack
                         self.http_connections[http_tuple][0][0] = ack_no
-                #print self.http_connections[http_tuple][2]
+                # print self.http_connections[http_tuple][2]
+                #print self.http_connections[http_tuple][3]
                 match_address_result = self.match_address(rule_split[2], request_host_name)
                 #print rule_split[2] + " " + request_host_name
                 #print match_address_result
@@ -642,19 +671,25 @@ class Firewall:
                     http_tuple = (dst_ip, src_ip, dst_port, src_port)
                 # check if loggable
                 #print "length: " + str(len(self.http_connections[http_tuple][2]))
-                if len(self.http_connections[http_tuple][2]) == 6:
+                #if len(self.http_connections[http_tuple][2]) == 6:
+                if "" not in self.http_connections[http_tuple][3].values():
                     #print "logging"
                     f = open("http.log", 'a')
                     # log it
-                    log_result = ' '.join(self.http_connections[http_tuple][2]) + '\n'
-                    f.write(log_result)
+                    #log_result = ' '.join(self.http_connections[http_tuple][2]) + '\n'
+                    result_dict = self.http_connections[http_tuple][3]
+                    result_str = ""
+                    result_str += result_dict["host_name"] + " " + result_dict["method"] + " " + result_dict["path"] + " " + result_dict["status_code"] + " " + result_dict["object_size"] + '\n'
+                    f.write(result_str)
                     f.flush()
                     f.close()
                     # clear request/response data from dictionary, NOT SURE IF WE LEAVE EXPECTED SEQUENCE NUMBERS UNCHANGED
-                    last_val = self.http_connections[http_tuple][2][-1]
+                    last_val = result_dict["object_size"]
+                    #last_val = self.http_connections[http_tuple][2][-1]
                     self.http_connections[http_tuple][2] = []
                     self.http_connections[http_tuple][0][1] = ''
                     self.http_connections[http_tuple][1][1] = ''
+                    self.http_connections[http_tuple][3] = {"host_name": "", "method": "", "path" : "", "version":"", "status_code":"", "object_size": ""}
                     if int(last_val) == -1:
                         del self.http_connections[http_tuple]
                 return True
